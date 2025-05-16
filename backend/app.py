@@ -1,6 +1,8 @@
 import sqlite3
 import os
 import logging
+import threading
+import time
 from flask import Flask, request, jsonify, g, send_from_directory
 from flask_cors import CORS
 from datetime import datetime
@@ -11,7 +13,7 @@ import db
 from db import get_db
 
 # Import utility functions
-from utils import hash_api_key, generate_api_key, post_to_dict
+from utils import hash_api_key, generate_api_key, post_to_dict, purge_database
 
 # Import blueprints
 from blueprints.keys_bp import keys_bp
@@ -341,6 +343,40 @@ def ping():
     logger.debug(f"Ping request from {request.remote_addr}")
     return jsonify({"status": "ok", "message": "GhostNet API is working!"}), 200
 
+# Database maintenance endpoint
+@app.route('/api/maintenance/purge', methods=['POST'])
+def purge_db_endpoint():
+    """Manually trigger a complete database purge operation"""
+    # Get database connection
+    db = get_db()
+    
+    # Run the purge operation
+    result = purge_database(db)
+    
+    return jsonify(result), 200 if result.get('success', False) else 500
+
+# Background purge scheduler
+def run_scheduled_purge(app_context, interval_hours=24):
+    """Run a scheduled database purge at regular intervals"""
+    logger.info(f"Starting scheduled database purge thread (interval: {interval_hours} hours)")
+    
+    while True:
+        # Sleep first to avoid purging right at startup
+        time.sleep(interval_hours * 3600)  # Convert hours to seconds
+        
+        # Use the application context to access the database
+        with app_context:
+            logger.info("Running scheduled database purge")
+            db = get_db()
+            result = purge_database(db)
+            
+            if result.get('success', False):
+                logger.info(f"Scheduled purge completed: {result.get('posts_deleted', 0)} posts and {result.get('keys_deleted', 0)} API keys deleted")
+            else:
+                logger.error(f"Scheduled purge failed: {result.get('error', 'Unknown error')}")
+
+
+
 # --- Serve Frontend ---
 # This route will serve index.html for the root path AND any other path not caught by API routes.
 # This is important for single-page applications (SPAs) that use client-side routing.
@@ -425,6 +461,19 @@ db.init_app(app)
 
 # This block allows running with `python app.py`
 if __name__ == '__main__':
+    # Start the database purge scheduler in a background thread
+    purge_interval = app.config.get('PURGE_INTERVAL_HOURS', 24)
+    
+    # Create and start the purge thread
+    purge_thread = threading.Thread(
+        target=run_scheduled_purge,
+        args=(app.app_context(), purge_interval),
+        daemon=True  # Thread will exit when main thread exits
+    )
+    purge_thread.start()
+    logger.info(f"Complete database purge scheduler started (interval: {purge_interval}h)")
+
+    
     # Run the app
     port = app.config.get('PORT', 5001)
     host = app.config.get('HOST', '0.0.0.0')

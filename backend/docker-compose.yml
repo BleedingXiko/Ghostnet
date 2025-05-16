@@ -1,19 +1,177 @@
 version: '3.8'
 
-services:
+# Custom networks for better isolation
+networks:
   backend:
-    build: .
+    driver: bridge
+  monitoring:
+    driver: bridge
+
+# Volumes for persistent data
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+  loki_storage:
+
+services:
+  # Backend API Service
+  backend:
+    build:
+      context: .
+      target: production
     ports:
       - "5001:5001"
+    environment:
+      - FLASK_ENV=production
+      - DATABASE_URL=postgresql://ghostnet:ghostnet@postgres:5432/ghostnet
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-jwt-secret-key}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - RATELIMIT_STORAGE_URL=redis://redis:6379/0
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
     volumes:
       - ./:/app
-      - db-data:/app/instance
+      - /app/instance
+      - /app/logs
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    networks:
+      - backend
+      - monitoring
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  # Database Service
+  postgres:
+    image: postgres:13-alpine
     environment:
-      - DEBUG=1
-      - SECRET_KEY=change_this_in_production
-      - DATABASE_FILENAME=ghostnet.db
+      - POSTGRES_USER=ghostnet
+      - POSTGRES_PASSWORD=ghostnet
+      - POSTGRES_DB=ghostnet
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ghostnet"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis Service
+  redis:
+    image: redis:6-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD:-your-redis-password}
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Monitoring Stack
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    volumes:
+      - prometheus_data:/prometheus
+      - ./deploy/prometheus:/etc/prometheus
+      - ./deploy/prometheus/rules:/etc/prometheus/rules
+    ports:
+      - "9090:9090"
+    networks:
+      - monitoring
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    networks:
+      - monitoring
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  loki:
+    image: grafana/loki:2.4.2
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data:/loki
+      - ./deploy/loki:/etc/loki
+    networks:
+      - monitoring
     restart: unless-stopped
 
-volumes:
-  db-data:
-    # This volume persists the database between container restarts
+  promtail:
+    image: grafana/promtail:2.4.2
+    volumes:
+      - ./:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./deploy/promtail:/etc/promtail
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    networks:
+      - monitoring
+    restart: unless-stopped
+    depends_on:
+      - loki
+
+  # Database Management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_DEFAULT_PASSWORD:-admin}
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - backend
+    restart: unless-stopped
+    depends_on:
+      - postgres
+
+  # Redis Management
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+      - HTTP_USER=admin
+      - HTTP_PASSWORD=${REDIS_COMMANDER_PASSWORD:-admin}
+    ports:
+      - "8081:8081"
+    networks:
+      - backend
+    restart: unless-stopped
+    depends_on:
+      - redis
