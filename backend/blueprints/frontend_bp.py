@@ -1,5 +1,6 @@
 from flask import Blueprint, current_app, send_from_directory, request
 import os
+import sys
 
 frontend_bp = Blueprint('frontend', __name__,
                         # static_folder='../static', # If static is one level up from blueprints dir

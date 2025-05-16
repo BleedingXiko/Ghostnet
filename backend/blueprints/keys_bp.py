@@ -1,7 +1,11 @@
 from flask import Blueprint, jsonify, current_app
-from backend.db import get_db
-from backend.utils import generate_api_key, hash_api_key
 import sqlite3
+import sys, os
+
+# Direct imports to avoid circular dependencies
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from db import get_db
+from utils import generate_api_key, hash_api_key
 
 keys_bp = Blueprint('keys', __name__, url_prefix='/api')
 

@@ -1,8 +1,12 @@
 from flask import Blueprint, request, jsonify, current_app
-from backend.db import get_db
-from backend.utils import hash_api_key, post_to_dict
 import requests # For check_link
 from requests.exceptions import RequestException # For check_link
+import sys, os
+
+# Direct imports to avoid circular dependencies
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from db import get_db
+from utils import hash_api_key, post_to_dict
 
 posts_bp = Blueprint('posts', __name__, url_prefix='/api')
 

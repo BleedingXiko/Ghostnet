@@ -1,0 +1,29 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# SQLite database files (if you want to exclude them from the image)
+# Uncomment if you don't want to include the database in the image
+# *.db
+
+# Git
+.git/
+.gitignore
+
+# Editor files
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Docker files (no need to copy these into the image)
+Dockerfile
+docker-compose.yml
+.dockerignore

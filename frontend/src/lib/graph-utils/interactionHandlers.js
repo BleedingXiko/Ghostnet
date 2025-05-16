@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { updateAllEdgeResolutions } from './edgeManager.js';
-import { applyHoverEffects, resetNodeVisualsOnHoverEnd, applyClickEffects } from './nodeManager.js';
+import { applyHoverEffects, resetNodeVisualsOnHoverEnd, applyClickEffects, triggerNodeJump } from './nodeManager.js'; // Added triggerNodeJump
 import { updateTooltipVisuals, hideTooltip } from './tooltipManager.js';
 
 export function createRaycaster() {
@@ -49,8 +49,17 @@ export function processMouseHover(event, {
   renderer, containerEl, camera, nodesGroup, raycaster,
   selectedNodeRef, lastClickedNodeRef, tooltipRef, currentTooltipHideTimeoutRef,
   updateSelectedNode, updateLastMousePosition,
+  isDragging, mouseMovedSince
 }) {
   if (!renderer || !containerEl) return;
+  
+  // Check if this is a mobile device - if so, don't show tooltips on hover
+  const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+  if (isTouchDevice) {
+    // Skip tooltip handling on mobile devices
+    return;
+  }
+
   const mouse = getMouseVector(event, renderer.domElement);
   updateLastMousePosition({ x: event.clientX, y: event.clientY, xNorm: mouse.x, yNorm: mouse.y });
 
@@ -60,7 +69,9 @@ export function processMouseHover(event, {
 
   if (selectedNodeRef.current !== intersectedObject) {
     if (selectedNodeRef.current) {
-      resetNodeVisualsOnHoverEnd(selectedNodeRef.current, lastClickedNodeRef.current);
+      if (!isTouchDevice) { // Only reset hover visuals if not a touch device
+        resetNodeVisualsOnHoverEnd(selectedNodeRef.current, lastClickedNodeRef.current);
+      }
       hideTooltip(tooltipRef.current, currentTooltipHideTimeoutRef);
       if (typeof document !== 'undefined' && document.body) {
         document.body.style.cursor = 'default';
@@ -71,40 +82,46 @@ export function processMouseHover(event, {
       if (typeof document !== 'undefined' && document.body) {
         document.body.style.cursor = 'pointer';
       }
-      // Temporarily disable effects and tooltip to debug freezing
-      applyHoverEffects(intersectedObject, lastClickedNodeRef.current);
+      if (!isTouchDevice) { // Only apply hover effects if not a touch device
+        applyHoverEffects(intersectedObject, lastClickedNodeRef.current);
+      }
+      // Tooltip should still show on hover for all devices if an item is targeted
       updateTooltipVisuals(event, intersectedObject.userData.post, tooltipRef.current, currentTooltipHideTimeoutRef);
       console.log('[GraphView] Hover detected on node:', intersectedObject.userData.post.title);
     } else {
       updateSelectedNode(null);
       // console.log('[GraphView] Hover ended, no node intersected.');
     }
-  } else if (intersectedObject && selectedNodeRef.current /* && tooltipRef.current && tooltipRef.current.style.display === 'block' */) {
-    // Still hovering the same node
-    updateTooltipVisuals(event, selectedNodeRef.current.userData.post, tooltipRef.current, currentTooltipHideTimeoutRef); // Also disabled for debugging
+  } else if (intersectedObject && selectedNodeRef.current) {
+    // Still hovering the same node, keep tooltip updated
+    updateTooltipVisuals(event, selectedNodeRef.current.userData.post, tooltipRef.current, currentTooltipHideTimeoutRef);
     // console.log('[GraphView] Still hovering on node:', selectedNodeRef.current.userData.post.title);
   }
 }
 
 export function processMouseClick(event, {
   renderer, camera, nodesGroup, raycaster, controls,
-  updateSelectedPost, updateLastClickedNode, getPosts // Pass posts store or a getter
+  updateSelectedPost, updateLastClickedNode, getPosts, // Pass posts store or a getter
+  tooltipRef, currentTooltipHideTimeoutRef, selectedNodeRef // New parameters for tooltip handling
 }) {
   const mouse = getMouseVector(event, renderer.domElement);
   raycaster.setFromCamera(mouse, camera);
   const intersects = raycaster.intersectObjects(nodesGroup.children, true);
 
+  // Always hide the tooltip immediately on any click
+  if (tooltipRef && currentTooltipHideTimeoutRef) {
+    hideTooltip(tooltipRef.current, currentTooltipHideTimeoutRef, true);
+  }
+
   if (intersects.length > 0) {
     const clickedObject = intersects[0].object;
     if (clickedObject.userData && clickedObject.userData.post) {
+      const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+      
       updateSelectedPost(clickedObject.userData.post);
       updateLastClickedNode(clickedObject);
-
-      // if (controls) controls.enabled = true; // Let controls be managed by their own start/end events primarily
-      // The main GraphView component's onDragStart/End for controls should handle isDragging state.
-      // Clicking a node shouldn't inherently re-enable controls if they were disabled for another reason.
-
       applyClickEffects(clickedObject);
+      triggerNodeJump(clickedObject); // Trigger the jump effect
 
       // Highlight in UI
       const posts = getPosts(); // Fetch current posts
@@ -121,6 +138,11 @@ export function processMouseClick(event, {
       }
       return clickedObject;
     }
+  } else {
+    // Clicked on background, hide tooltip if refs are available
+    if (tooltipRef && currentTooltipHideTimeoutRef) {
+      hideTooltip(tooltipRef.current, currentTooltipHideTimeoutRef);
+    }
   }
   return null;
 }
@@ -132,8 +154,11 @@ export function handleMouseLeaveGraph(
     currentTooltipHideTimeoutRef,
     updateSelectedNode // Function to update selectedNode in parent
 ) {
+    const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
     if (selectedNodeRef.current && selectedNodeRef.current !== lastClickedNodeRef.current) {
-        resetNodeVisualsOnHoverEnd(selectedNodeRef.current, lastClickedNodeRef.current);
+        if (!isTouchDevice) {
+            resetNodeVisualsOnHoverEnd(selectedNodeRef.current, lastClickedNodeRef.current);
+        }
         updateSelectedNode(null); // Clear selected node in parent state
     }
     hideTooltip(tooltipRef.current, currentTooltipHideTimeoutRef);

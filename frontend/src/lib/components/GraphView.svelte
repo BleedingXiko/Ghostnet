@@ -59,6 +59,71 @@
   
   let forceSimulation = true;
   let nodeVelocities = {};
+
+// --- REHEAT FUNCTION ---
+function nudgeOverlappingNodes(minDistance = 2.5) {
+  // Nudge nodes apart if they're overlapping
+  const nodesArr = Object.values(nodeObjects);
+  for (let i = 0; i < nodesArr.length; i++) {
+    for (let j = i + 1; j < nodesArr.length; j++) {
+      const a = nodesArr[i];
+      const b = nodesArr[j];
+      if (!a.position || !b.position) continue;
+      const diff = new THREE.Vector3().subVectors(a.position, b.position);
+      const dist = diff.length();
+      if (dist < minDistance && dist > 0.001) {
+        // Move both nodes away from each other
+        diff.normalize();
+        const move = (minDistance - dist) / 2;
+        a.position.addScaledVector(diff, move);
+        b.position.addScaledVector(diff, -move);
+      } else if (dist <= 0.001) {
+        // If exactly overlapped, move randomly
+        const rand = new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, 0).normalize().multiplyScalar(minDistance/2);
+        a.position.add(rand);
+        b.position.sub(rand);
+      }
+    }
+  }
+}
+
+function reheatGraph() {
+  // Reset node velocities and forces to re-energize the layout
+  nodeVelocities = {};
+  nodeForces = {};
+  physicsStabilized = false;
+  stabilizationCounter = 0;
+  simulationSpeed = Cfg.SIMULATION_SPEED_INITIAL * 1.5; // Use higher initial speed for more energy
+  
+  // Apply random forces to all nodes to shake up the graph
+  const nodes = Object.values(nodeObjects);
+  nodes.forEach(node => {
+    if (!node || !node.userData || !node.userData.post) return;
+    const postId = node.userData.post.id;
+    
+    // Create a random direction vector
+    const randomAngle = Math.random() * Math.PI * 2;
+    const randomForce = new THREE.Vector3(
+      Math.cos(randomAngle) * 0.5,
+      Math.sin(randomAngle) * 0.5,
+      0
+    );
+    
+    // Add some randomness to the force magnitude
+    const forceMagnitude = 0.5 + Math.random() * 1.0;
+    randomForce.multiplyScalar(forceMagnitude);
+    
+    // Initialize velocity with this random force
+    nodeVelocities[postId] = randomForce.clone();
+  });
+  
+  // Use a more aggressive nudge to separate overlapping nodes
+  nudgeOverlappingNodes(Cfg.MIN_NODE_DISTANCE * 0.5);
+  
+  console.log('Graph reheated with random forces applied!');
+}
+
+
   let nodeForces = {};
   let simulationSpeed = Cfg.SIMULATION_SPEED_INITIAL;
   let physicsStabilized = false;
@@ -96,6 +161,16 @@
     }
   }
 
+  // Function to fetch fresh data and update the graph
+  async function fetchLiveUpdates() {
+    console.log('Manually refreshing graph data...');
+    // Import the fetchPosts function from the store
+    const { fetchPosts } = await import('../stores.js');
+    await fetchPosts();
+    // The reactive declaration will handle updating the graph when posts store changes
+    console.log('Graph refresh complete');
+  }
+
   // --- LIFECYCLE METHODS ---
   onMount(() => {
     if (!containerEl) return;
@@ -130,6 +205,9 @@
             edges = edgesRef.current;
         });
     }
+
+    // Initial fetch of data can happen here if needed
+    // fetchLiveUpdates();
   });
 
   onDestroy(() => {
@@ -157,7 +235,11 @@
           svelteLastClickedNode = node;
           lastClickedNodeRef.current = node;
         },
-        getPosts: () => filteredPosts // Provide current filteredPosts
+        getPosts: () => filteredPosts, // Provide current filteredPosts
+        // Add refs needed by processMouseClick for tooltip handling
+        tooltipRef,
+        currentTooltipHideTimeoutRef,
+        selectedNodeRef
       });
     }
     setTimeout(() => { isDragging = false; }, 50);
@@ -428,8 +510,22 @@
 
 <div bind:this={containerEl} class="rounded-lg overflow-hidden w-full relative shadow-lg" style="height: {height}">
   <!-- Three.js canvas will be injected here -->
-  <div class="absolute top-2 right-2 bg-gray-800 bg-opacity-80 text-white text-xs p-2 rounded-md backdrop-blur-sm shadow-sm">
-    Pan to move | Scroll to zoom
+  <div class="absolute top-2 right-2 bg-gray-800 bg-opacity-80 text-white text-xs p-2 rounded-md backdrop-blur-sm shadow-sm flex gap-2 items-center">
+    <span>Pan to move | Scroll to zoom</span>
+    <button
+      class="ml-2 px-2 py-1 rounded bg-indigo-500 hover:bg-indigo-600 transition text-white text-xs font-semibold shadow"
+      on:click={reheatGraph}
+      title="Reheat graph layout for better spacing"
+    >
+      Reheat
+    </button>
+    <button
+      class="ml-2 px-2 py-1 rounded bg-emerald-500 hover:bg-emerald-600 transition text-white text-xs font-semibold shadow"
+      on:click={fetchLiveUpdates}
+      title="Refresh data and update graph"
+    >
+      Refresh
+    </button>
   </div>
   <div class="absolute bottom-2 left-2 flex items-center gap-2 bg-gray-800 bg-opacity-80 text-white text-xs p-2 rounded-md backdrop-blur-sm shadow-sm">
     <div class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-full bg-opacity-90 bg-white"></span> Active</div>
@@ -458,7 +554,7 @@
     padding: 12px 16px; /* Increased padding */
     border-radius: 10px; /* More rounded corners */
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6); /* Softer, more spread shadow */
-    pointer-events: none;
+    pointer-events: none; /* Ensure it doesn't block mouse events */
     z-index: 1000; /* Ensure it's above other elements */
     max-width: 280px; /* Slightly wider */
     overflow: hidden;
@@ -469,9 +565,14 @@
     font-size: 13px; /* Slightly smaller base font for tooltip content */
     line-height: 1.6; /* Improved line spacing */
     transform: translateZ(0); /* Force hardware acceleration */
-    transition: opacity 0.2s ease-out, transform 0.2s ease-out; /* Smoother transitions, add transform */
+    transition: opacity 0.15s ease-out, transform 0.15s ease-out; /* Match the timeout duration */
     opacity: 0; /* Start hidden for transition */
     will-change: opacity, transform; /* Optimize for animations */
+  }
+  
+  /* Ensure all tooltip contents don't interfere with mouse events */
+  :global(.tooltip *) {
+    pointer-events: none;
   }
 
   :global(.tooltip .text-sm.font-bold) {

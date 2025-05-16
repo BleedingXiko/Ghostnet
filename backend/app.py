@@ -1,21 +1,22 @@
 import sqlite3
-import hashlib
-import secrets
 import os
 import logging
 from flask import Flask, request, jsonify, g, send_from_directory
 from flask_cors import CORS
 from datetime import datetime
-from .config import Config
 
 # Import configurations and database setup
-from . import db # For db.init_app
-from .db import get_db # Use get_db from db.py
+from config import Config
+import db
+from db import get_db
+
+# Import utility functions
+from utils import hash_api_key, generate_api_key, post_to_dict
 
 # Import blueprints
-from .blueprints.keys_bp import keys_bp
-from .blueprints.posts_bp import posts_bp
-from .blueprints.frontend_bp import frontend_bp
+from blueprints.keys_bp import keys_bp
+from blueprints.posts_bp import posts_bp
+from blueprints.frontend_bp import frontend_bp
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -31,30 +32,7 @@ app.config.from_object(Config)
 # Setup CORS properly for all routes
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# --- Helper functions ---
-def hash_api_key(api_key):
-    """Hashes an API key using SHA256."""
-    return hashlib.sha256(api_key.encode('utf-8')).hexdigest()
-
-def generate_api_key():
-    """Generate a new API key."""
-    return secrets.token_hex(16) # Generates a 32-character hex string
-
-def post_to_dict(post):
-    """Convert a post row to dictionary."""
-    return {
-        'id': post['id'],
-        'tunnel_url': post['tunnel_url'],
-        'title': post['title'],
-        'description': post['description'],
-        'tags': post['tags'].split(',') if post['tags'] else [],
-        'provider': post['provider'],
-        'upvotes': post['upvotes'],
-        'created_at': post['created_at'],
-        'is_alive': bool(post['is_alive']) if 'is_alive' in post.keys() else True,
-        'last_checked': post['last_checked'] if 'last_checked' in post.keys() else None,
-        'failed_checks': post['failed_checks'] if 'failed_checks' in post.keys() else 0
-    }
+# Helper functions are now imported from utils.py
 
 # --- API Endpoints ---
 @app.route('/api/generate_key', methods=['POST'])
@@ -437,20 +415,19 @@ def create_app(test_config=None):
     app.logger.info("Flask app created and configured successfully.")
     return app
 
-# This block allows running with `python -m backend.app` or `python backend/app.py` (if __init__.py is set up for backend)
-# but `flask run` is preferred for development with FLASK_APP=backend.app
-if __name__ == '__main__':
-    # Register blueprints on the global app instance
-    app.register_blueprint(keys_bp)
-    app.register_blueprint(posts_bp)
-    app.register_blueprint(frontend_bp)
+# Register blueprints on the global app instance
+app.register_blueprint(keys_bp)
+app.register_blueprint(posts_bp)
+app.register_blueprint(frontend_bp)
 
-    # Initialize the database using db.py module
-    with app.app_context(): # Ensure app context for init_app if it needs it internally
-        db.init_app(app)
-    
-    host = app.config.get('HOST', '0.0.0.0')
+# Initialize the database
+db.init_app(app)
+
+# This block allows running with `python app.py`
+if __name__ == '__main__':
+    # Run the app
     port = app.config.get('PORT', 5001)
-    
-    logger.info(f"Starting Flask app on {host}:{port} with debug={app.config['DEBUG']}")
-    app.run(host=host, port=port, debug=app.config['DEBUG']) 
+    host = app.config.get('HOST', '0.0.0.0')
+    debug = app.config.get('DEBUG', True)
+    print(f"Starting GhostNet backend on {host}:{port} (debug={debug})")
+    app.run(host=host, port=port, debug=debug)

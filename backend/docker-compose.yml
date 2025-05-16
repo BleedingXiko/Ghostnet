@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./:/app
+      - db-data:/app/instance
+    environment:
+      - DEBUG=1
+      - SECRET_KEY=change_this_in_production
+      - DATABASE_FILENAME=ghostnet.db
+    restart: unless-stopped
+
+volumes:
+  db-data:
+    # This volume persists the database between container restarts

@@ -9,7 +9,7 @@ import {
   UPVOTE_RING_COLOR, UPVOTE_RING_OPACITY, UPVOTE_THRESHOLD_FOR_RING,
   HOVER_SCALE_FACTOR, HOVER_EMISSIVE_COLOR, HOVER_GLOW_SIZE, HOVER_GLOW_LERP_FACTOR,
   CLICK_GLOW_SIZE, CLICK_GLOW_COLOR,
-  providerColors
+  providerColors, JUMP_INITIAL_FRAMES // Added JUMP_INITIAL_FRAMES
 } from './config.js';
 
 export function createNode(post) {
@@ -65,9 +65,67 @@ export function createNode(post) {
     nodeMesh.add(upvoteRing);
   }
 
-  nodeMesh.userData = { post };
+  nodeMesh.userData = { 
+    post,
+    isJumping: false,
+    jumpFramesRemaining: 0
+  };
   nodeMesh.position.z = 0;
   return nodeMesh;
+}
+
+export function triggerNodeJump(node) {
+  if (node && node.userData) {
+    node.userData.isJumping = true;
+    node.userData.jumpFramesRemaining = JUMP_INITIAL_FRAMES;
+    // Optional: Enhance the existing pulseAnimation or add a specific jump visual cue here
+    if (node.userData.pulseAnimation) {
+        // Make pulse more pronounced for jump
+        const originalPulse = node.userData.pulseAnimation;
+        let jumpPulseCounter = 0;
+        const jumpPulseMax = 15; // Make it a bit longer/more noticeable than a standard click pulse
+
+        node.userData.pulseAnimation = () => {
+            if (node && node.scale) {
+                const baseScale = 1.0;
+                const jumpScaleFactor = 1.5; // Make it jump out more
+                const progress = Math.sin((jumpPulseCounter / jumpPulseMax) * Math.PI); // Smooth in and out
+                const scale = baseScale + progress * (jumpScaleFactor - baseScale);
+                node.scale.set(scale, scale, 1);
+                jumpPulseCounter++;
+                if (jumpPulseCounter > jumpPulseMax) {
+                    node.scale.set(baseScale, baseScale, 1); // Reset scale
+                    // Restore original pulse or remove if it was only for jump
+                    // For now, let's assume click effect might re-add its own pulse
+                    if (typeof originalPulse === 'function' && originalPulse !== node.userData.pulseAnimation) {
+                         // If there was an original pulse (e.g. from click), it might be complex to restore perfectly
+                         // For simplicity, we might just remove it or let click handler re-apply.
+                         // delete node.userData.pulseAnimation; // Or restore originalPulse if it's safe
+                    } else {
+                         delete node.userData.pulseAnimation;
+                    }
+                }
+            }
+        };
+    } else { // If no pulse animation (e.g. node not clicked), create a temporary one for the jump
+        let jumpPulseCounter = 0;
+        const jumpPulseMax = 15;
+        node.userData.pulseAnimation = () => {
+            if (node && node.scale) {
+                const baseScale = 1.0;
+                const jumpScaleFactor = 1.5;
+                const progress = Math.sin((jumpPulseCounter / jumpPulseMax) * Math.PI);
+                const scale = baseScale + progress * (jumpScaleFactor - baseScale);
+                node.scale.set(scale, scale, 1);
+                jumpPulseCounter++;
+                if (jumpPulseCounter > jumpPulseMax) {
+                    node.scale.set(baseScale, baseScale, 1);
+                    delete node.userData.pulseAnimation;
+                }
+            }
+        };
+    }
+  }
 }
 
 export function applyHoverEffects(node, lastClickedNode) {

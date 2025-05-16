@@ -44,13 +44,19 @@ export function updateTooltipVisuals(event, post, tooltipEl, currentTooltipHideT
   if (rect.top < 10) tooltipEl.style.top = `${event.clientY + 20}px`; // Flip below cursor if too high
 }
 
-export function hideTooltip(tooltipEl, currentTooltipHideTimeoutRef) {
+export function hideTooltip(tooltipEl, currentTooltipHideTimeoutRef, immediate = false) {
   if (!tooltipEl) return;
 
   // Clear any *previous* hide timeout that might still be pending
   if (currentTooltipHideTimeoutRef.current) {
     clearTimeout(currentTooltipHideTimeoutRef.current);
     currentTooltipHideTimeoutRef.current = null; 
+  }
+
+  if (immediate) {
+    tooltipEl.style.display = 'none';
+    tooltipEl.style.opacity = '0';
+    return;
   }
 
   tooltipEl.style.opacity = '0'; // Start fading out
