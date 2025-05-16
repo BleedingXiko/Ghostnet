@@ -1,0 +1,6 @@
+@echo off
+echo Installing Flask if needed...
+pip install flask
+
+echo Running simple network test server...
+python test_network.py 
