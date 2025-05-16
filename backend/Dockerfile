@@ -58,7 +58,7 @@ COPY --chown=appuser:appuser . .
 USER appuser
 
 # Set environment variables
-ENV FLASK_APP=app.py \
+ENV FLASK_APP=wsgi.py \
     FLASK_ENV=production \
     PYTHONPATH=/app \
     PYTHONUNBUFFERED=1 \
@@ -66,18 +66,14 @@ ENV FLASK_APP=app.py \
     PIP_NO_CACHE_DIR=off \
     PIP_DISABLE_PIP_VERSION_CHECK=on \
     PIP_DEFAULT_TIMEOUT=100 \
-    GUNICORN_WORKERS=4 \
-    GUNICORN_THREADS=2 \
-    GUNICORN_TIMEOUT=120 \
-    GUNICORN_MAX_REQUESTS=1000 \
-    GUNICORN_MAX_REQUESTS_JITTER=50
+    PORT=5001
 
 # Expose the port the app runs on
 EXPOSE 5001
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:5001/health || exit 1
+    CMD curl -f http://localhost:5001/api/ping || exit 1
 
 # Command to run the application
 CMD ["gunicorn", \

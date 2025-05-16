@@ -3,9 +3,8 @@ import sqlite3
 import sys, os
 
 # Direct imports to avoid circular dependencies
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from db import get_db
-from utils import generate_api_key, hash_api_key
+from app.models.db import get_db
+from app.utils.utils import generate_api_key, hash_api_key
 
 keys_bp = Blueprint('keys', __name__, url_prefix='/api')
 
