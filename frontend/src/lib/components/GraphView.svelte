@@ -221,11 +221,19 @@ function reheatGraph() {
 
   function onSvelteMouseDown(event) {
     mouseDownTime = Date.now();
+    // Store initial position for detecting if this was a click or drag
+    lastMousePosition = { x: event.clientX, y: event.clientY, xNorm: 0, yNorm: 0 };
   }
 
   function onSvelteMouseUp(event) {
     const clickDuration = Date.now() - mouseDownTime;
-    if (clickDuration < 200 && !isDragging) {
+    const moveDistance = Math.sqrt(
+      Math.pow(event.clientX - lastMousePosition.x, 2) + 
+      Math.pow(event.clientY - lastMousePosition.y, 2)
+    );
+    
+    // Only process as a click if it was short duration and minimal movement
+    if (clickDuration < 200 && moveDistance < 5 && !isDragging) {
       const mouse = getMouseVector(event, renderer.domElement);
       processMouseClick(event, {
         renderer: renderer, // Pass renderer itself
@@ -297,23 +305,92 @@ function reheatGraph() {
     }
   }
 
+  // Handle touch events specifically for better mobile experience
+  function onTouchStart(event) {
+    mouseDownTime = Date.now();
+    
+    // Store the touch position for later comparison
+    if (event.touches.length === 1) {
+      lastMousePosition = { 
+        x: event.touches[0].clientX, 
+        y: event.touches[0].clientY, 
+        xNorm: 0, 
+        yNorm: 0 
+      };
+    }
+  }
+  
+  function onTouchEnd(event) {
+    const clickDuration = Date.now() - mouseDownTime;
+    
+    // Process as a tap only if it was a short duration and not a drag
+    if (clickDuration < 300 && !isDragging && event.changedTouches.length > 0) {
+      // Create a synthetic mouse event from the touch
+      const touch = event.changedTouches[0];
+      const mouseEvent = new MouseEvent('mouseup', {
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+        bubbles: true,
+        cancelable: true,
+        view: window
+      });
+      
+      const moveDistance = Math.sqrt(
+        Math.pow(touch.clientX - lastMousePosition.x, 2) + 
+        Math.pow(touch.clientY - lastMousePosition.y, 2)
+      );
+      
+      // Only process as a tap if minimal movement occurred
+      if (moveDistance < 10) {
+        processMouseClick(mouseEvent, {
+          renderer: renderer,
+          camera, nodesGroup, raycaster, controls,
+          updateSelectedPost: (post) => selectedPost = post,
+          updateLastClickedNode: (node) => {
+            svelteLastClickedNode = node;
+            lastClickedNodeRef.current = node;
+          },
+          getPosts: () => filteredPosts,
+          tooltipRef,
+          currentTooltipHideTimeoutRef,
+          selectedNodeRef
+        });
+      }
+    }
+    
+    setTimeout(() => { isDragging = false; }, 50);
+  }
+
   function setupEventListeners() {
     window.addEventListener('resize', onSvelteWindowResize);
+    
+    // Mouse events for desktop
     containerEl.addEventListener('mousemove', onSvelteMouseMove, { capture: true, passive: true });
     containerEl.addEventListener('mousedown', onSvelteMouseDown, { capture: true, passive: false });
     containerEl.addEventListener('mouseup', onSvelteMouseUp, { capture: true, passive: false });
     containerEl.addEventListener('mouseleave', onSvelteMouseLeave, { capture: true, passive: true });
     document.addEventListener('mousemove', onDocumentMouseMove, { passive: true });
+    
+    // Additional touch event handlers for better mobile experience
+    // These complement the pointer events in the EnhancedPanControls
+    containerEl.addEventListener('touchstart', onTouchStart, { passive: false });
+    containerEl.addEventListener('touchend', onTouchEnd, { passive: false });
+    
     setupHoverSafetyCheck();
   }
 
   function removeEventListeners() {
     window.removeEventListener('resize', onSvelteWindowResize);
     if (containerEl) {
+      // Remove mouse events
       containerEl.removeEventListener('mousemove', onSvelteMouseMove);
       containerEl.removeEventListener('mousedown', onSvelteMouseDown);
       containerEl.removeEventListener('mouseup', onSvelteMouseUp);
       containerEl.removeEventListener('mouseleave', onSvelteMouseLeave);
+      
+      // Remove touch events
+      containerEl.removeEventListener('touchstart', onTouchStart);
+      containerEl.removeEventListener('touchend', onTouchEnd);
     }
     document.removeEventListener('mousemove', onDocumentMouseMove);
     if (hoverCheckInterval) clearInterval(hoverCheckInterval);
@@ -376,6 +453,7 @@ function reheatGraph() {
   function animate() {
     animationFrameId = requestAnimationFrame(animate);
     try {
+      // Update controls with each frame for smooth inertia and damping
       if (controls) controls.update();
 
       if (forceSimulation) {

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import { EnhancedPanControls } from './enhancedPanControls.js';
 
 export function setupScene() {
   const scene = new THREE.Scene();
@@ -51,17 +51,30 @@ export function setupLighting(scene) {
 }
 
 export function setupControls(camera, rendererDomElement, onDragStart, onDragEnd) {
-  const controls = new OrbitControls(camera, rendererDomElement);
-  controls.enableRotate = false;
+  // Use the new EnhancedPanControls for better desktop and mobile experience
+  const controls = new EnhancedPanControls(camera, rendererDomElement);
+  
+  // Configure the controls
   controls.enableDamping = true;
-  controls.dampingFactor = 0.05;
+  controls.dampingFactor = 0.1; // Smoother damping
   controls.screenSpacePanning = true;
-  controls.panSpeed = 0.7;
-  controls.zoomSpeed = 1.0;
+  controls.panSpeed = 1.0; // More responsive panning
+  controls.zoomSpeed = 1.2; // Slightly faster zoom
   controls.minZoom = 0.5;
   controls.maxZoom = 4;
+  
+  // Enable inertia for smoother panning experience
+  controls.inertiaEnabled = true;
+  controls.inertiaFactor = 0.85; // Longer inertia for smoother feel
+  
+  // Enable pinch zoom for mobile with better sensitivity
+  controls.pinchZoomEnabled = true;
+  controls.pinchZoomSpeed = 1.5;
+  
+  // Add event listeners
   controls.addEventListener('start', onDragStart);
   controls.addEventListener('end', onDragEnd);
+  
   return controls;
 }
 

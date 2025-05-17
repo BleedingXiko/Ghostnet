@@ -15,10 +15,42 @@ function applyGravitationalForce(node, allNodeForces) {
   centerForce.normalize().multiplyScalar(timeVariation * upvoteFactor); // Time-varying force
   allNodeForces[postId].add(centerForce);
   
-  // Add a small random jitter for more liveliness
+  // Add a small random jitter for more liveliness, but scale it based on node density
+  // This reduces jitter when nodes are close to others
+  let jitterScale = 0.003;
+  
+  // If we can access the node's position, check for nearby nodes and reduce jitter
+  if (node.position) {
+    // Find if this node is close to any other node
+    const position = node.position;
+    let nearbyNodeCount = 0;
+    
+    // Check a sample of nodes to estimate density (checking all would be too expensive)
+    const sampleSize = Math.min(10, allNodeForces.length);
+    for (let i = 0; i < sampleSize; i++) {
+      const otherNodeId = Object.keys(allNodeForces)[i];
+      if (otherNodeId !== postId) {
+        const otherNode = nodeObjects[otherNodeId];
+        if (otherNode && otherNode.position) {
+          const dist = position.distanceTo(otherNode.position);
+          if (dist < MIN_NODE_DISTANCE * 1.2) {
+            nearbyNodeCount++;
+            // Reduce jitter more for very close nodes
+            if (dist < MIN_NODE_DISTANCE * 0.8) {
+              jitterScale *= 0.5;
+            }
+          }
+        }
+      }
+    }
+    
+    // Scale jitter based on nearby nodes
+    jitterScale *= Math.max(0.2, 1 - (nearbyNodeCount / sampleSize) * 0.8);
+  }
+  
   const jitter = new THREE.Vector3(
-    (Math.random() - 0.5) * 0.003,
-    (Math.random() - 0.5) * 0.003,
+    (Math.random() - 0.5) * jitterScale,
+    (Math.random() - 0.5) * jitterScale,
     0
   );
   allNodeForces[postId].add(jitter);
@@ -188,37 +220,55 @@ function applyNodeRepulsionForces(allNodes, allNodeForces, nodeVelocities) {
         // Calculate how deep the collision is (as a percentage of minDistance)
         const collisionDepth = (minDistance - distance) / minDistance;
         
-        // Use a gentler curve for smoother bouncing
-        const bounceFactor = Math.pow(collisionDepth, 1.5) * 1.2;
+        // Use a much gentler curve for smoother bouncing - reduced exponent for more linear response
+        const bounceFactor = Math.pow(collisionDepth, 1.2) * 1.0;
         
-        // Calculate collision force with gentler bounce
-        const collisionForceMagnitude = COLLISION_STRENGTH * bounceFactor * pairOscillation;
-        const collisionForce = repulsion.clone().normalize().multiplyScalar(collisionForceMagnitude);
+        // Calculate collision force with gentler bounce and reduced oscillation influence
+        // Reduce the influence of pairOscillation when nodes are very close to prevent jitter
+        const oscillationInfluence = Math.min(1.0, distance / (minDistance * 0.7));
+        const adjustedOscillation = 1.0 + (pairOscillation - 1.0) * oscillationInfluence;
+        const collisionForceMagnitude = COLLISION_STRENGTH * bounceFactor * adjustedOscillation;
         
-        // Add a subtle rotational component for gentle web-like motion
-        const rotationalForce = new THREE.Vector3(-repulsion.y, repulsion.x, 0).normalize().multiplyScalar(collisionForceMagnitude * 0.1);
-        
-        // Apply a gentle bounce effect when nodes are very close
-        if (distance < minDistance * 0.6) {
-          // Add a moderate impulse for a gentle bounce
-          const bounceStrength = Math.pow((minDistance * 0.6 - distance) / (minDistance * 0.6), 1.2) * COLLISION_STRENGTH * 0.5;
-          const bounceImpulse = repulsion.clone().normalize().multiplyScalar(bounceStrength);
-          
-          // Apply the impulse with minimal random variation
-          const randomAngle = Math.random() * Math.PI * 2;
-          const randomOffset = new THREE.Vector3(
-            Math.cos(randomAngle) * 0.05,
-            Math.sin(randomAngle) * 0.05,
+        // Use a more stable repulsion direction with less normalization error at very small distances
+        let repulsionNormalized;
+        if (distance < 0.001) {
+          // For extremely close nodes, use a consistent direction instead of normalizing a tiny vector
+          // This prevents erratic behavior due to floating point errors
+          repulsionNormalized = new THREE.Vector3(
+            (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 2,
             0
-          );
+          ).normalize();
+        } else {
+          repulsionNormalized = repulsion.clone().normalize();
+        }
+        
+        const collisionForce = repulsionNormalized.multiplyScalar(collisionForceMagnitude);
+        
+        // Add a very subtle rotational component - reduced for less jitter
+        const rotationalForce = new THREE.Vector3(-repulsion.y, repulsion.x, 0).normalize().multiplyScalar(collisionForceMagnitude * 0.05);
+        
+        // Apply a gentle bounce effect when nodes are very close - with distance-based damping
+        if (distance < minDistance * 0.6) {
+          // Add a moderate impulse for a gentle bounce - with smoother curve
+          const bounceStrength = Math.pow((minDistance * 0.6 - distance) / (minDistance * 0.6), 1.1) * COLLISION_STRENGTH * 0.4;
+          const bounceImpulse = repulsionNormalized.clone().multiplyScalar(bounceStrength);
           
-          // Add the impulse with minimal random variation
-          allNodeForces[nodeAId].add(bounceImpulse.clone().add(randomOffset));
-          allNodeForces[nodeBId].sub(bounceImpulse.clone().sub(randomOffset));
+          // Apply the impulse with NO random variation when very close (prevents jitter)
+          allNodeForces[nodeAId].add(bounceImpulse.clone());
+          allNodeForces[nodeBId].sub(bounceImpulse.clone());
           
-          // Apply gentler velocity modifications
+          // Apply gentler velocity modifications with distance-based damping
           if (nodeVelocities && nodeVelocities[nodeAId] && nodeVelocities[nodeBId]) {
-            const velocityImpulse = repulsion.clone().normalize().multiplyScalar(bounceStrength * 0.2);
+            // Apply stronger damping when nodes are very close to reduce oscillation
+            const closenessDamping = 0.7 + (0.2 * (1 - distance / (minDistance * 0.6)));
+            
+            // Dampen existing velocities more when nodes are very close
+            nodeVelocities[nodeAId].multiplyScalar(closenessDamping);
+            nodeVelocities[nodeBId].multiplyScalar(closenessDamping);
+            
+            // Add a gentler impulse
+            const velocityImpulse = repulsionNormalized.clone().multiplyScalar(bounceStrength * 0.15);
             nodeVelocities[nodeAId].add(velocityImpulse);
             nodeVelocities[nodeBId].sub(velocityImpulse);
           }
@@ -227,7 +277,7 @@ function applyNodeRepulsionForces(allNodes, allNodeForces, nodeVelocities) {
         allNodeForces[nodeAId].add(collisionForce);
         allNodeForces[nodeBId].sub(collisionForce);
         
-        // Apply rotational forces
+        // Apply rotational forces - reduced for stability
         allNodeForces[nodeAId].add(rotationalForce);
         allNodeForces[nodeBId].add(rotationalForce);
       } else if (distance < 20) { // Increased repulsion range
@@ -242,7 +292,7 @@ function applyNodeRepulsionForces(allNodes, allNodeForces, nodeVelocities) {
   }
 }
 
-// Function to enforce minimum distance between all nodes
+// Function to enforce minimum distance between all nodes with anti-jitter improvements
 function enforceMinimumDistance(nodes, nodeVelocities) {
   if (!nodes || nodes.length < 2) return;
   
@@ -257,26 +307,48 @@ function enforceMinimumDistance(nodes, nodeVelocities) {
       
       // Only enforce minimum distance if nodes are significantly too close
       // This reduces jitteriness by not constantly adjusting nodes that are near the threshold
-      if (distance < MIN_NODE_DISTANCE * 0.7) {
-        const separation = new THREE.Vector3().subVectors(nodeA.position, nodeB.position);
-        separation.normalize();
+      // Reduced threshold to only correct more severe violations
+      if (distance < MIN_NODE_DISTANCE * 0.65) {
+        // Handle extremely close nodes specially to avoid floating point issues
+        let separation;
+        if (distance < 0.001) {
+          // For extremely close nodes, use a consistent direction
+          separation = new THREE.Vector3(
+            (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 2,
+            0
+          ).normalize();
+        } else {
+          separation = new THREE.Vector3().subVectors(nodeA.position, nodeB.position).normalize();
+        }
         
-        // Calculate how much to move each node, but do it more gradually
-        // This creates smoother motion by not making large sudden adjustments
-        const moveDistance = (MIN_NODE_DISTANCE - distance) * 0.15; // Much gentler adjustment (15% instead of 50%)
+        // Calculate how much to move each node using a smooth curve
+        // This creates smoother motion by making adjustments proportional to violation depth
+        const violationRatio = (MIN_NODE_DISTANCE * 0.65 - distance) / (MIN_NODE_DISTANCE * 0.65);
+        // Use a non-linear curve that's gentler for minor violations and stronger for severe ones
+        const adjustmentFactor = Math.pow(violationRatio, 1.2) * 0.12; // Even gentler adjustment factor
+        const moveDistance = (MIN_NODE_DISTANCE - distance) * adjustmentFactor;
         
-        // Move nodes apart gradually
+        // Move nodes apart gradually with more stable vectors
         nodeA.position.add(separation.clone().multiplyScalar(moveDistance));
         nodeB.position.sub(separation.clone().multiplyScalar(moveDistance));
         
-        // Add a very gentle velocity adjustment in separation direction
+        // Add a very gentle velocity adjustment in separation direction with damping
         if (nodeVelocities) {
           const nodeAId = nodeA.userData?.post?.id;
           const nodeBId = nodeB.userData?.post?.id;
           
           if (nodeAId && nodeBId && nodeVelocities[nodeAId] && nodeVelocities[nodeBId]) {
-            // Much gentler velocity impulse
-            const velocityImpulse = separation.clone().multiplyScalar(0.1);
+            // Apply stronger damping when nodes are very close to reduce oscillation
+            const closenessDamping = 0.8 + (0.15 * violationRatio);
+            
+            // Dampen existing velocities more when nodes are very close
+            nodeVelocities[nodeAId].multiplyScalar(closenessDamping);
+            nodeVelocities[nodeBId].multiplyScalar(closenessDamping);
+            
+            // Apply an extremely gentle velocity impulse that scales with violation depth
+            const velocityStrength = 0.08 * Math.pow(violationRatio, 1.3);
+            const velocityImpulse = separation.clone().multiplyScalar(velocityStrength);
             nodeVelocities[nodeAId].add(velocityImpulse);
             nodeVelocities[nodeBId].sub(velocityImpulse);
           }
@@ -286,12 +358,18 @@ function enforceMinimumDistance(nodes, nodeVelocities) {
   }
 }
 
+// Track the last frame time to calculate delta time for smoother animations
+let lastFrameTime = Date.now() * 0.001;
+
 export function applyForcesToNodes(nodeObjects, edges, nodeForces, nodeVelocities, simulationSpeed) {
   const currentNodes = Object.values(nodeObjects);
   if (!currentNodes.length) return 0;
 
   let totalSystemMovement = 0;
-  const time = Date.now() * 0.001; // Current time in seconds for animations
+  const currentTime = Date.now() * 0.001; // Current time in seconds for animations
+  const deltaTime = currentTime - lastFrameTime; // Time since last frame
+  lastFrameTime = currentTime;
+  const time = currentTime; // For backward compatibility
 
   currentNodes.forEach(node => {
     if (!node || !node.userData || !node.userData.post) return;
@@ -383,8 +461,16 @@ export function applyForcesToNodes(nodeObjects, edges, nodeForces, nodeVelocitie
       ));
     }
     
-    node.position.add(velocity.clone().multiplyScalar(simulationSpeed));
-    node.position.z = 0;
+    // Apply the adjusted velocity with delta time smoothing
+    // This helps maintain consistent motion regardless of frame rate
+    const frameAdjustedSpeed = simulationSpeed * Math.min(deltaTime * 60, 2.0);
+    
+    // Apply velocity with smoothing
+    node.position.add(velocity.clone().multiplyScalar(frameAdjustedSpeed));
+    
+    // Calculate the total movement for this node
+    const nodeMovement = velocity.length() * frameAdjustedSpeed;
+    totalSystemMovement += nodeMovement;
 
     // Apply boundary constraints with a soft bounce effect
     if (Math.abs(node.position.x) > MAX_NODE_POSITION_RANGE) {
